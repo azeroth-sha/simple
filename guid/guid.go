@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -21,10 +22,11 @@ const (
 )
 
 var (
-	endian = binary.BigEndian
-	hID    uint16 // 主机ID
-	pID    uint16 // 进程号
-	sID    uint32 // 流水号
+	guidPool = &sync.Pool{New: func() any { return new(big.Int) }}
+	endian   = binary.BigEndian
+	hID      uint16 // 主机ID
+	pID      uint16 // 进程号
+	sID      uint32 // 流水号
 )
 
 // GUID is the global unique ID.
@@ -32,7 +34,8 @@ type GUID [guidBLen]byte
 
 // String returns the string.
 func (g GUID) String() string {
-	bInt := new(big.Int)
+	bInt := getInt()
+	defer putInt(bInt)
 	bInt.SetBytes(g[:])
 	id := bInt.Text(guidBase)
 	if len(id) < guidSLen {
@@ -99,11 +102,12 @@ func (g *GUID) UnmarshalText(text []byte) error {
 			g[i] = 0
 		}
 	} else {
-		id := new(big.Int)
-		if _, ok := id.SetString(string(text), guidBase); !ok {
+		bInt := getInt()
+		defer putInt(bInt)
+		if _, ok := bInt.SetString(string(text), guidBase); !ok {
 			return fmt.Errorf("%s: %v", os.ErrInvalid, text)
 		} else {
-			copy(g[:], id.Bytes())
+			copy(g[:], bInt.Bytes())
 		}
 	}
 	return nil
@@ -214,4 +218,13 @@ func getHostID() uint16 {
 
 func getSerial() uint32 {
 	return atomic.AddUint32(&sID, 1)
+}
+
+func getInt() *big.Int {
+	return guidPool.Get().(*big.Int)
+}
+
+func putInt(bInt *big.Int) {
+	bInt.SetInt64(0)
+	guidPool.Put(bInt)
 }
