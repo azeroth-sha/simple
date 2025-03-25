@@ -174,6 +174,24 @@ func NewWithTime(t time.Time) GUID {
 	return id
 }
 
+// Parse 解析全局唯一ID
+func Parse(id string) (GUID, error) {
+	var g GUID
+	if err := g.UnmarshalText([]byte(id)); err != nil {
+		return g, err
+	}
+	return g, nil
+}
+
+// MustParse 解析全局唯一ID
+func MustParse(id string) GUID {
+	g, err := Parse(id)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
 /*
   Package method
 */
