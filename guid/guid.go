@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	guidBLen = 12 // GUID字节长度
-	guidSLen = 20 // GUID字符长度
-	guidBase = 36 // GUID转换进制
+	BLen = 12 // GUID字节长度
+	SLen = 20 // GUID字符长度
+	Base = 36 // GUID转换进制
 )
 
 var (
@@ -30,16 +30,16 @@ var (
 )
 
 // GUID is the global unique ID.
-type GUID [guidBLen]byte
+type GUID [BLen]byte
 
 // String returns the string.
 func (g GUID) String() string {
 	bInt := getInt()
 	defer putInt(bInt)
 	bInt.SetBytes(g[:])
-	id := bInt.Text(guidBase)
-	if len(id) < guidSLen {
-		id = strings.Repeat("0", guidSLen-len(id)) + id
+	id := bInt.Text(Base)
+	if len(id) < SLen {
+		id = strings.Repeat("0", SLen-len(id)) + id
 	}
 	return id
 }
@@ -69,6 +69,11 @@ func (g GUID) Serial() uint32 {
 	return binary.BigEndian.Uint32(g[8:])
 }
 
+// Equal returns true if the two IDs are equal.
+func (g GUID) Equal(id GUID) bool {
+	return g == id
+}
+
 // MarshalBinary implements the encoding.BinaryMarshaler interface.
 func (g GUID) MarshalBinary() (data []byte, err error) {
 	return g[:], nil
@@ -76,10 +81,10 @@ func (g GUID) MarshalBinary() (data []byte, err error) {
 
 // UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
 func (g *GUID) UnmarshalBinary(data []byte) error {
-	if len(data) > 0 && len(data) != guidBLen {
+	if len(data) > 0 && len(data) != BLen {
 		return fmt.Errorf("%s: %v", os.ErrInvalid, data)
 	} else if len(data) == 0 {
-		for i := 0; i < guidBLen; i++ {
+		for i := 0; i < BLen; i++ {
 			g[i] = 0
 		}
 	} else {
@@ -95,16 +100,16 @@ func (g GUID) MarshalText() (text []byte, err error) {
 
 // UnmarshalText implements the encoding.TextUnmarshaler interface.
 func (g *GUID) UnmarshalText(text []byte) error {
-	if len(text) > 0 && len(text) != guidSLen {
+	if len(text) > 0 && len(text) != SLen {
 		return fmt.Errorf("%s: %v", os.ErrInvalid, text)
 	} else if len(text) == 0 {
-		for i := 0; i < guidBLen; i++ {
+		for i := 0; i < BLen; i++ {
 			g[i] = 0
 		}
 	} else {
 		bInt := getInt()
 		defer putInt(bInt)
-		if _, ok := bInt.SetString(string(text), guidBase); !ok {
+		if _, ok := bInt.SetString(string(text), Base); !ok {
 			return fmt.Errorf("%s: %v", os.ErrInvalid, text)
 		} else {
 			copy(g[:], bInt.Bytes())
@@ -115,9 +120,9 @@ func (g *GUID) UnmarshalText(text []byte) error {
 
 // MarshalJSON implements the json.Marshaler interface.
 func (g GUID) MarshalJSON() ([]byte, error) {
-	out := make([]byte, guidSLen+2)
+	out := make([]byte, SLen+2)
 	out[0] = '"'
-	out[guidSLen+1] = '"'
+	out[SLen+1] = '"'
 	buf, _ := g.MarshalText()
 	copy(out[1:], buf)
 	return out, nil
@@ -125,14 +130,14 @@ func (g GUID) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (g *GUID) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && len(data) != guidSLen+2 {
+	if len(data) > 0 && len(data) != SLen+2 {
 		return fmt.Errorf("%s: %v", os.ErrInvalid, data)
 	} else if len(data) == 0 {
-		for i := 0; i < guidBLen; i++ {
+		for i := 0; i < BLen; i++ {
 			g[i] = 0
 		}
 	} else {
-		return g.UnmarshalText(data[1 : guidSLen+1])
+		return g.UnmarshalText(data[1 : SLen+1])
 	}
 	return nil
 }
@@ -150,7 +155,7 @@ func (g *GUID) Scan(src any) error {
 	case []byte:
 		return g.UnmarshalBinary(v)
 	case nil:
-		for i := 0; i < guidBLen; i++ {
+		for i := 0; i < BLen; i++ {
 			g[i] = 0
 		}
 		return nil
