@@ -9,10 +9,11 @@ import (
 
 // Grace 优雅关闭服务
 type Grace struct {
-	mu     *sync.Mutex
-	wait   *sync.WaitGroup
-	srv    []*service
-	logger simple.Logger
+	mu       *sync.Mutex
+	wait     *sync.WaitGroup
+	srv      []*service
+	logger   simple.Logger
+	interval time.Duration
 }
 
 // Add 添加服务
@@ -36,7 +37,9 @@ func (g *Grace) Run() {
 	g.logger.Info("grace start")
 	for _, srv := range all {
 		srv.start()
-		time.Sleep(time.Second)
+		if g.interval > 0 {
+			time.Sleep(g.interval)
+		}
 	}
 	g.logger.Info("grace running")
 }
@@ -56,17 +59,24 @@ func (g *Grace) Stop() {
 	defer g.logger.Info("grace stopped")
 	for _, srv := range all {
 		srv.stop()
-		time.Sleep(time.Second)
+		if g.interval > 0 {
+			time.Sleep(g.interval)
+		}
 	}
 	g.wait.Wait()
 }
 
 // New 创建一个Grace实例
-func New(l simple.Logger) *Grace {
-	return &Grace{
-		mu:     new(sync.Mutex),
-		wait:   new(sync.WaitGroup),
-		srv:    make([]*service, 0),
-		logger: l,
+func New(l simple.Logger, opts ...Option) *Grace {
+	g := &Grace{
+		mu:       new(sync.Mutex),
+		wait:     new(sync.WaitGroup),
+		srv:      make([]*service, 0),
+		logger:   l,
+		interval: time.Millisecond * 150,
 	}
+	for _, option := range opts {
+		option(g)
+	}
+	return g
 }
