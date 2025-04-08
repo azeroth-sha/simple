@@ -9,7 +9,7 @@ import (
 var (
 	_reader     = rand.Reader
 	_readMu     = new(sync.Mutex)
-	defaultRand = NewRandom(256, Chars)
+	defaultRand = NewRandom(256, DefaultDict)
 )
 
 func Int() int {
@@ -60,19 +60,23 @@ func Float64() float64 {
 	return defaultRand.Float64()
 }
 
-func String(length int) string {
-	return defaultRand.String(length)
+func Chars(length int) string {
+	return defaultRand.Chars(length)
 }
 
-func StringWithChars(length int, chars []rune) string {
-	return defaultRand.StringWithChars(length, chars)
+func CharsWith(length int, dict []byte) string {
+	return defaultRand.CharsWith(length, dict)
+}
+
+func TextWith(length int, dict []rune) string {
+	return defaultRand.TextWith(length, dict)
 }
 
 func NewRandom(size int, chars string) Random {
 	r := &random{
 		pool:  new(sync.Pool),
 		size:  size,
-		chars: []rune(chars),
+		chars: []byte(chars),
 	}
 	r.pool.New = r.newBuff
 	return r

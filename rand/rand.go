@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-const Chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+const DefaultDict = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 // Random interface
 type Random interface {
@@ -24,14 +24,15 @@ type Random interface {
 	Uint64() uint64
 	Float32() float32
 	Float64() float64
-	String(length int) string
-	StringWithChars(length int, chars []rune) string
+	Chars(length int) string
+	CharsWith(length int, dict []byte) string
+	TextWith(length int, dict []rune) string
 }
 
 type random struct {
 	pool  *sync.Pool
 	size  int
-	chars []rune
+	chars []byte
 }
 
 func (r *random) Int() int {
@@ -119,23 +120,26 @@ func (r *random) Float64() float64 {
 	}
 	return num
 }
+func (r *random) Chars(length int) string {
+	return r.CharsWith(length, r.chars)
+}
 
-func (r *random) String(length int) string {
+func (r *random) CharsWith(length int, dict []byte) string {
 	buf := buff.GetBuff()
 	defer buff.PutBuff(buf)
-	max := len(r.chars)
+	max := uint8(len(dict))
 	for i := 0; i < length; i++ {
-		_, _ = buf.WriteRune(r.chars[r.Int()%max])
+		_ = buf.WriteByte(dict[r.Uint8()%max])
 	}
 	return buf.String()
 }
 
-func (r *random) StringWithChars(length int, chars []rune) string {
+func (r *random) TextWith(length int, dict []rune) string {
 	buf := buff.GetBuff()
 	defer buff.PutBuff(buf)
-	max := len(chars)
+	max := uint32(len(dict))
 	for i := 0; i < length; i++ {
-		_, _ = buf.WriteRune(chars[r.Int()%max])
+		_, _ = buf.WriteRune(dict[r.Uint32()%max])
 	}
 	return buf.String()
 }
