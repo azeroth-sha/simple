@@ -1,6 +1,7 @@
 package guid
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
@@ -72,6 +73,26 @@ func (g GUID) Serial() uint32 {
 // Equal returns true if the two IDs are equal.
 func (g GUID) Equal(id GUID) bool {
 	return g == id
+}
+
+// Lt returns true if the first ID is less than the second ID.
+func (g GUID) Lt(id GUID) bool {
+	return bytes.Compare(g[:], id[:]) < 0
+}
+
+// Lte returns true if the first ID is less than or equal to the second ID.
+func (g GUID) Lte(id GUID) bool {
+	return bytes.Compare(g[:], id[:]) <= 0
+}
+
+// Gt returns true if the first ID is greater than the second ID.
+func (g GUID) Gt(id GUID) bool {
+	return bytes.Compare(g[:], id[:]) > 0
+}
+
+// Gte returns true if the first ID is greater than or equal to the second ID.
+func (g GUID) Gte(id GUID) bool {
+	return bytes.Compare(g[:], id[:]) >= 0
 }
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface.
