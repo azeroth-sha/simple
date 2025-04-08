@@ -13,14 +13,6 @@ var (
 	ErrIndexNotFound = errors.New(`index not found`)
 )
 
-const (
-	keySep = `-`   // 键分隔符
-	keyLmt = `.`   // 键限制符
-	preTBL = `tbl` // 表结构
-	preDAT = `dat` // 表数据
-	preIDX = `idx` // 表索引
-)
-
 // Object 表结构
 type Object interface {
 	TableName() string              // 表名
@@ -31,6 +23,13 @@ type Object interface {
 
 // Filter 过滤器
 type Filter func(index string, value []byte) bool
+
+// Search 查询参数
+type Search struct {
+	Limit  int               // 查询限制(0为不限制)
+	Desc   bool              // 是否倒序
+	Filter map[string]Filter // 过滤器
+}
 
 // DB 数据库接口
 type DB interface {
@@ -50,8 +49,20 @@ type DB interface {
 	// Has 检查对象是否存在于数据库中，可以通过索引加速查找
 	Has(obj Object, index ...string) (has bool, err error)
 	// Find 根据索引查找对象，并返回对象的唯一标识符列表
-	Find(obj Object, limit int64, filterMap map[string]Filter) (all []guid.GUID, err error)
+	Find(obj Object, search *Search) (all []guid.GUID, err error)
 }
+
+/*
+  Package define
+*/
+
+const (
+	keySep = `-`   // 键分隔符
+	keyLmt = `.`   // 键限制符
+	preTBL = `tbl` // 表结构
+	preDAT = `dat` // 表数据
+	preIDX = `idx` // 表索引
+)
 
 type table struct {
 	Name  string   `msgpack:"n"` // 表名

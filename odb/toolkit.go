@@ -48,7 +48,7 @@ func bufReset(bufList ...*bytes.Buffer) {
 
 func reflectNew(o Object) func() Object {
 	t := reflect.TypeOf(o)
-	if t.Kind() != reflect.Ptr {
+	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 	return func() Object {
@@ -63,23 +63,7 @@ func mustClose(c io.Closer) {
 	_ = c.Close()
 }
 
-func idIntersect(a, b []guid.GUID) []guid.GUID {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	m := make(map[guid.GUID]struct{})
-	for _, id := range a {
-		if _, ok := m[id]; ok {
-			continue
-		}
-		m[id] = struct{}{}
-	}
-	a = a[:0]
-	l := len(b)
-	for i := 0; i < l; i++ {
-		if _, ok := m[b[i]]; ok {
-			a = append(a, b[i])
-		}
-	}
-	return a
+func parseGUID(buf []byte) (id guid.GUID) {
+	copy(id[:], buf)
+	return
 }
