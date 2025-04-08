@@ -235,7 +235,7 @@ func init() {
 func getHostID() uint16 {
 	hid, err := internal.HostID()
 	if hid == "" || err != nil {
-		hid = rand.String(16)
+		hid = rand.Chars(16)
 	}
 	h := sum.NewCrc16()
 	_, _ = h.Write([]byte(hid))
