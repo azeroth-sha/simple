@@ -2,6 +2,7 @@ package sum
 
 import "hash"
 
+// crcHi and crcLo are lookup tables for the CRC-16 calculation
 var (
 	crcHi = []byte{
 		0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81, 0x40,
@@ -41,13 +42,16 @@ var (
 	}
 )
 
+// Hash16 is an interface that extends hash.Hash with a method to return the checksum as a uint16
 type Hash16 interface {
 	hash.Hash
 	Sum16() uint16
 }
 
+// crc16 is a type that implements the Hash16 interface
 type crc16 uint16
 
+// Write updates the hash with the given data
 func (c *crc16) Write(p []byte) (n int, err error) {
 	var (
 		hi = uint8(*c >> 8)
@@ -62,28 +66,33 @@ func (c *crc16) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// Sum appends the current hash to b and returns the resulting slice
 func (c *crc16) Sum(b []byte) []byte {
 	v := uint32(*c)
 	return append(b, byte(v>>8), byte(v))
 }
 
+// Reset resets the hash to its initial state
 func (c *crc16) Reset() {
 	*c = 0xFFFF
 }
 
+// Size returns the number of bytes Sum will return
 func (c *crc16) Size() int {
 	return 2
 }
 
+// BlockSize returns the hash's underlying block size
 func (c *crc16) BlockSize() int {
 	return 1
 }
 
+// Sum16 returns the current hash as a uint16
 func (c *crc16) Sum16() uint16 {
 	return uint16(*c)
 }
 
-// NewCrc16 crc16
+// NewCrc16 creates a new CRC-16 hash
 func NewCrc16() Hash16 {
 	h := crc16(0xFFFF)
 	return &h
