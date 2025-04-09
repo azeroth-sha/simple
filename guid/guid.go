@@ -28,10 +28,16 @@ var (
 	hID      uint16 // 主机ID
 	pID      uint16 // 进程号
 	sID      uint32 // 流水号
+	NULL     GUID   // 空GUID
 )
 
 // GUID is the global unique ID.
 type GUID [BLen]byte
+
+// Empty returns true if the ID is empty.
+func (g GUID) Empty() bool {
+	return g == NULL
+}
 
 // String returns the string.
 func (g GUID) String() string {
