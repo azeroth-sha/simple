@@ -72,8 +72,13 @@ func (g GUID) ProcessID() uint16 {
 }
 
 // Serial returns the serial number.
-func (g GUID) Serial() uint32 {
-	return binary.BigEndian.Uint32(g[8:])
+func (g GUID) Serial() uint16 {
+	return binary.BigEndian.Uint16(g[8:10])
+}
+
+// Random returns the random number.
+func (g GUID) Random() uint16 {
+	return binary.BigEndian.Uint16(g[10:])
 }
 
 // Equal returns true if the two IDs are equal.
@@ -195,7 +200,8 @@ func (g *GUID) Scan(src any) error {
 // 4 byte: 时间戳(S)
 // 2 byte: 主机号
 // 2 byte: 进程号
-// 4 byte: 流水号
+// 2 byte: 流水号
+// 2 byte: 随机数
 func New() GUID {
 	return NewWithTime(time.Now())
 }
@@ -206,7 +212,8 @@ func NewWithTime(t time.Time) GUID {
 	endian.PutUint32(id[:4], uint32(t.Unix()))
 	endian.PutUint16(id[4:6], hID)
 	endian.PutUint16(id[6:8], pID)
-	endian.PutUint32(id[8:], getSerial())
+	endian.PutUint16(id[8:10], getSerial())
+	endian.PutUint16(id[10:], rand.Uint16())
 	return id
 }
 
@@ -248,8 +255,8 @@ func getHostID() uint16 {
 	return h.Sum16()
 }
 
-func getSerial() uint32 {
-	return atomic.AddUint32(&sID, 1)
+func getSerial() uint16 {
+	return uint16(atomic.AddUint32(&sID, 1))
 }
 
 func getInt() *big.Int {
