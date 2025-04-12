@@ -5,6 +5,7 @@ go 1.20
 require (
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/shirou/gopsutil/v4 v4.25.2
+	github.com/tjfoc/gmsm v1.4.1
 	github.com/ugorji/go/codec v1.2.7
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df
 )
