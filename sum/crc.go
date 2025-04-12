@@ -94,6 +94,7 @@ func (c *crc16) Sum16() uint16 {
 
 // NewCrc16 creates a new CRC-16 hash
 func NewCrc16() Hash16 {
-	h := crc16(0xFFFF)
-	return &h
+	h := new(crc16)
+	h.Reset()
+	return h
 }
