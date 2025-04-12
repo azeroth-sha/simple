@@ -6,8 +6,11 @@ import (
 	"time"
 )
 
-// Client 是 resty.Client 的别名，表示 HTTP 客户端
-type Client = resty.Client
+type (
+	Client   = resty.Client
+	Request  = resty.Request
+	Response = resty.Response
+)
 
 // New 创建并配置一个新的 HTTP 客户端实例
 // 返回值为 *Client 类型，表示配置好的 HTTP 客户端
