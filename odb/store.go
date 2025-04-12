@@ -6,8 +6,8 @@ import (
 	"github.com/azeroth-sha/simple/buff"
 	"github.com/azeroth-sha/simple/guid"
 	"github.com/cockroachdb/pebble"
-	"golang.org/x/exp/slices"
 	"path"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -166,11 +166,11 @@ func (s *store) Find(obj Object, search *Search) (all []guid.GUID, err error) {
 	} else {
 		all, err = s.findDatIDs(tin, search)
 	}
-	slices.SortStableFunc(all, func(a, b guid.GUID) bool {
+	slices.SortStableFunc(all, func(a, b guid.GUID) int {
 		if search.Desc {
-			return a.Gt(b)
+			return bytes.Compare(b[:], a[:])
 		}
-		return a.Lt(b)
+		return bytes.Compare(a[:], b[:])
 	})
 	if search.Limit > 0 && len(all) > search.Limit {
 		all = all[:search.Limit]

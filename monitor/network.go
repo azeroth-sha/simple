@@ -2,7 +2,7 @@ package monitor
 
 import (
 	"github.com/shirou/gopsutil/v4/net"
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 // NetStat 定义了网络接口信息的结构体，包含接口名称、硬件地址、标志、地址列表、发送字节数和接收字节数等字段
