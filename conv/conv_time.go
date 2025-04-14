@@ -95,6 +95,8 @@ func UnixE(v any) (int64, error) {
 	tm, err := ToTimeE(v)
 	if err != nil {
 		return 0, err
+	} else if tm.IsZero() {
+		return 0, nil
 	}
 	return tm.Unix(), nil
 }
@@ -110,6 +112,8 @@ func UnixMsE(v any) (int64, error) {
 	tm, err := ToTimeE(v)
 	if err != nil {
 		return 0, err
+	} else if tm.IsZero() {
+		return 0, nil
 	}
 	return tm.UnixMilli(), nil
 }
