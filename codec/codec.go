@@ -1,33 +1,62 @@
 package codec
 
 import (
-	code "github.com/ugorji/go/codec"
+	"errors"
+)
+
+var ErrUnknownType = errors.New(`unknown type`)
+
+type Type uint16
+
+const (
+	Json Type = iota + 1 // json
+	MsgP                 // msgpack
 )
 
 // Marshal encode to bytes
 func Marshal(t Type, v any) ([]byte, error) {
-	b := make([]byte, 0)
-	e := code.NewEncoderBytes(&b, getHandler(t)).
-		Encode(v)
-	return b, e
+	switch t {
+	case Json:
+		return JsonMarshal(v)
+	case MsgP:
+		return MsgPMarshal(v)
+	default:
+		return nil, ErrUnknownType
+	}
 }
 
 // MustMarshal encode to bytes
 func MustMarshal(t Type, v any) []byte {
-	b := make([]byte, 0)
-	code.NewEncoderBytes(&b, getHandler(t)).
-		MustEncode(v)
-	return b
+	switch t {
+	case Json:
+		return JsonMustMarshal(v)
+	case MsgP:
+		return MsgPMustMarshal(v)
+	default:
+		panic(ErrUnknownType)
+	}
 }
 
 // Unmarshal decode from bytes
 func Unmarshal(t Type, b []byte, v any) error {
-	return code.NewDecoderBytes(b, getHandler(t)).
-		Decode(v)
+	switch t {
+	case Json:
+		return JsonUnmarshal(b, v)
+	case MsgP:
+		return MsgPUnmarshal(b, v)
+	default:
+		return ErrUnknownType
+	}
 }
 
 // MustUnmarshal decode from bytes
 func MustUnmarshal(t Type, b []byte, v any) {
-	code.NewDecoderBytes(b, getHandler(t)).
-		MustDecode(v)
+	switch t {
+	case Json:
+		JsonMustUnmarshal(b, v)
+	case MsgP:
+		MsgPMustUnmarshal(b, v)
+	default:
+		panic(ErrUnknownType)
+	}
 }

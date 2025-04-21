@@ -2,21 +2,33 @@ package odb
 
 import (
 	"bytes"
+	"encoding"
 	"github.com/azeroth-sha/simple/guid"
 	"github.com/azeroth-sha/simple/internal"
-	"github.com/ugorji/go/codec"
+	"github.com/vmihailenco/msgpack/v5"
 	"io"
 	"reflect"
 )
 
 func encode(b *bytes.Buffer, v any) error {
-	h := new(codec.MsgpackHandle)
-	return codec.NewEncoder(b, h).Encode(v)
+	if coding, ok := v.(encoding.BinaryMarshaler); ok {
+		if bs, e := coding.MarshalBinary(); e != nil {
+			return e
+		} else {
+			b.Write(bs)
+			return nil
+		}
+	} else {
+		return msgpack.NewEncoder(b).Encode(v)
+	}
 }
 
 func decode(b *bytes.Buffer, v any) error {
-	h := new(codec.MsgpackHandle)
-	return codec.NewDecoder(b, h).Decode(v)
+	if coding, ok := v.(encoding.BinaryUnmarshaler); ok {
+		return coding.UnmarshalBinary(b.Bytes())
+	} else {
+		return msgpack.NewDecoder(b).Decode(v)
+	}
 }
 
 func join(buf *bytes.Buffer, sep string, pre []byte, bs ...[]byte) {
