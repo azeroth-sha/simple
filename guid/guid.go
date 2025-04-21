@@ -34,6 +34,12 @@ var (
 // GUID is the global unique ID.
 type GUID [BLen]byte
 
+func (g GUID) Reset() {
+	for i := 0; i < BLen; i++ {
+		g[i] = 0
+	}
+}
+
 // Empty returns true if the ID is empty.
 func (g GUID) Empty() bool {
 	return g == NULL
@@ -113,14 +119,15 @@ func (g GUID) MarshalBinary() (data []byte, err error) {
 
 // UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
 func (g *GUID) UnmarshalBinary(data []byte) error {
-	if len(data) > 0 && len(data) != BLen {
+	switch len(data) {
+	case 0:
+		g.Reset()
+	case BLen:
+		_ = copy(g[:], data)
+	case SLen:
+		return g.UnmarshalText(data)
+	default:
 		return fmt.Errorf("%s: %v", os.ErrInvalid, data)
-	} else if len(data) == 0 {
-		for i := 0; i < BLen; i++ {
-			g[i] = 0
-		}
-	} else {
-		copy(g[:], data)
 	}
 	return nil
 }
@@ -132,13 +139,12 @@ func (g GUID) MarshalText() (text []byte, err error) {
 
 // UnmarshalText implements the encoding.TextUnmarshaler interface.
 func (g *GUID) UnmarshalText(text []byte) error {
-	if len(text) > 0 && len(text) != SLen {
-		return fmt.Errorf("%s: %v", os.ErrInvalid, text)
-	} else if len(text) == 0 {
-		for i := 0; i < BLen; i++ {
-			g[i] = 0
-		}
-	} else {
+	switch len(text) {
+	case 0, 4:
+		g.Reset()
+	case BLen:
+		return g.UnmarshalBinary(text)
+	case SLen:
 		bInt := getInt()
 		defer putInt(bInt)
 		if _, ok := bInt.SetString(string(text), Base); !ok {
@@ -146,6 +152,8 @@ func (g *GUID) UnmarshalText(text []byte) error {
 		} else {
 			copy(g[:], bInt.Bytes())
 		}
+	default:
+		return fmt.Errorf("%s: %s", os.ErrInvalid, text)
 	}
 	return nil
 }
@@ -162,16 +170,8 @@ func (g GUID) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (g *GUID) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && len(data) != SLen+2 {
-		return fmt.Errorf("%s: %v", os.ErrInvalid, data)
-	} else if len(data) == 0 {
-		for i := 0; i < BLen; i++ {
-			g[i] = 0
-		}
-	} else {
-		return g.UnmarshalText(data[1 : SLen+1])
-	}
-	return nil
+	data = bytes.Trim(data, `"`)
+	return g.UnmarshalText(data)
 }
 
 // Value implements the driver.Valuer interface.
@@ -187,13 +187,11 @@ func (g *GUID) Scan(src any) error {
 	case []byte:
 		return g.UnmarshalBinary(v)
 	case nil:
-		for i := 0; i < BLen; i++ {
-			g[i] = 0
-		}
-		return nil
+		g.Reset()
 	default:
 		return fmt.Errorf("%s: %v", os.ErrInvalid, src)
 	}
+	return nil
 }
 
 // New 生成全局唯一ID
