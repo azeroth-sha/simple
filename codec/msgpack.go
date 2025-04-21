@@ -9,7 +9,7 @@ func MsgPMarshal(v any) ([]byte, error) {
 }
 
 func MsgPMustMarshal(v any) []byte {
-	b, e := JsonMarshal(v)
+	b, e := MsgPMarshal(v)
 	if e != nil {
 		panic(e)
 	}
@@ -21,7 +21,7 @@ func MsgPUnmarshal(b []byte, v any) error {
 }
 
 func MsgPMustUnmarshal(b []byte, v any) {
-	if e := JsonUnmarshal(b, v); e != nil {
+	if e := MsgPUnmarshal(b, v); e != nil {
 		panic(e)
 	}
 }
