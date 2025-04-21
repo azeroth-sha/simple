@@ -1,14 +1,14 @@
-//go:build !jsoniter
-// +build !jsoniter
+//go:build jsoniter
+// +build jsoniter
 
 package codec
 
 import (
-	"github.com/bytedance/sonic"
+	jsoniter "github.com/json-iterator/go"
 )
 
 func JsonMarshal(v any) ([]byte, error) {
-	return sonic.Marshal(v)
+	return jsoniter.Marshal(v)
 }
 
 func JsonMustMarshal(v any) []byte {
@@ -20,7 +20,7 @@ func JsonMustMarshal(v any) []byte {
 }
 
 func JsonUnmarshal(b []byte, v any) error {
-	return sonic.Unmarshal(b, v)
+	return jsoniter.Unmarshal(b, v)
 }
 
 func JsonMustUnmarshal(b []byte, v any) {
