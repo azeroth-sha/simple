@@ -5,30 +5,14 @@ import (
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
-	"github.com/azeroth-sha/simple/internal"
-	"github.com/azeroth-sha/simple/rand"
-	"github.com/azeroth-sha/simple/sum"
-	"math/big"
 	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 const (
 	BLen = 12 // GUID字节长度
 	SLen = 20 // GUID字符长度
 	Base = 36 // GUID转换进制
-)
-
-var (
-	guidPool = &sync.Pool{New: func() any { return new(big.Int) }}
-	endian   = binary.BigEndian
-	hID      uint16 // 主机ID
-	pID      uint16 // 进程号
-	sID      uint32 // 流水号
-	NULL     GUID   // 空GUID
 )
 
 // GUID is the global unique ID.
@@ -67,14 +51,9 @@ func (g GUID) Unix() int64 {
 	return int64(binary.BigEndian.Uint32(g[:4]))
 }
 
-// HostID returns the host ID.
-func (g GUID) HostID() uint16 {
-	return binary.BigEndian.Uint16(g[4:6])
-}
-
-// ProcessID returns the process ID.
-func (g GUID) ProcessID() uint16 {
-	return binary.BigEndian.Uint16(g[6:8])
+// MarkID returns the mark ID.
+func (g GUID) MarkID() uint32 {
+	return binary.BigEndian.Uint32(g[4:8])
 }
 
 // Serial returns the serial number.
@@ -192,76 +171,4 @@ func (g *GUID) Scan(src any) error {
 		return fmt.Errorf("%s: %v", os.ErrInvalid, src)
 	}
 	return nil
-}
-
-// New 生成全局唯一ID
-// 4 byte: 时间戳(S)
-// 2 byte: 主机号
-// 2 byte: 进程号
-// 2 byte: 流水号
-// 2 byte: 随机数
-func New() GUID {
-	return NewWithTime(time.Now())
-}
-
-// NewWithTime 生成全局唯一ID
-func NewWithTime(t time.Time) GUID {
-	var id GUID
-	endian.PutUint32(id[:4], uint32(t.Unix()))
-	endian.PutUint16(id[4:6], hID)
-	endian.PutUint16(id[6:8], pID)
-	endian.PutUint16(id[8:10], getSerial())
-	endian.PutUint16(id[10:], rand.Uint16())
-	return id
-}
-
-// Parse 解析全局唯一ID
-func Parse(id string) (GUID, error) {
-	var g GUID
-	if err := g.UnmarshalText([]byte(id)); err != nil {
-		return g, err
-	}
-	return g, nil
-}
-
-// MustParse 解析全局唯一ID
-func MustParse(id string) GUID {
-	g, err := Parse(id)
-	if err != nil {
-		panic(err)
-	}
-	return g
-}
-
-/*
-  Package method
-*/
-
-func init() {
-	hID = getHostID()
-	pID = uint16(os.Getpid())
-	sID = rand.Uint32()
-}
-
-func getHostID() uint16 {
-	hid, err := internal.HostID()
-	if hid == "" || err != nil {
-		hid = rand.Chars(16)
-	}
-	h := sum.NewCrc16()
-	_, _ = h.Write([]byte(hid))
-	return h.Sum16()
-}
-
-func getSerial() uint16 {
-	return uint16(atomic.AddUint32(&sID, 1))
-}
-
-func getInt() *big.Int {
-	return guidPool.Get().(*big.Int)
-}
-
-func putInt(bInt *big.Int) {
-	bInt.SetInt64(0)
-	guidPool.Put(bInt)
 }
