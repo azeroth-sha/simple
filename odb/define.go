@@ -15,10 +15,10 @@ var (
 
 // Object 表结构
 type Object interface {
-	TableName() string              // 表名
-	TableID() guid.GUID             // 表ID
-	TableIndex() []string           // 表索引
-	TableField(field string) []byte // 表字段
+	TableName() (name string)                // 表名
+	TableID() (id guid.GUID)                 // 表ID
+	TableIndex() (fields []string)           // 表索引
+	TableField(field string) (values []byte) // 表字段
 }
 
 // Filter 过滤器
@@ -26,13 +26,16 @@ type Filter func(index string, value []byte) bool
 
 // Search 查询参数
 type Search struct {
-	Limit  int               // 查询限制(0为不限制)
-	Desc   bool              // 是否倒序
-	Filter map[string]Filter // 过滤器
+	Limit     int      // 查询限制(<=0为不限制)
+	Desc      bool     // 是否倒序
+	Index     []string // 索引
+	Filter    Filter   // 过滤器
+	UnixBegin int64    // 时间范围开始(S)
+	UnixEnd   int64    // 时间范围结束(S)
 }
 
-// DB 数据库接口
-type DB interface {
+// ODB 数据库接口
+type ODB interface {
 	// DB 返回pebble.DB
 	DB() *pebble.DB
 	// Maintain 维护对象的表结构，如果表不存在则创建表
@@ -59,9 +62,9 @@ type DB interface {
 const (
 	keySep = `-`   // 键分隔符
 	keyLmt = `.`   // 键限制符
-	preTBL = `tbl` // 表结构
-	preDAT = `dat` // 表数据
-	preIDX = `idx` // 表索引
+	keyTBL = `tbl` // 表结构
+	keyDAT = `dat` // 表数据
+	keyIDX = `idx` // 表索引
 )
 
 type table struct {

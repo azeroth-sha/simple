@@ -3,7 +3,7 @@ package odb
 import (
 	"bytes"
 	"errors"
-	"github.com/azeroth-sha/simple/buff"
+	"fmt"
 	"github.com/azeroth-sha/simple/guid"
 	"github.com/cockroachdb/pebble"
 	"path"
@@ -12,159 +12,169 @@ import (
 	"sync/atomic"
 )
 
-type store struct {
+type objectDB struct {
 	mu     *sync.RWMutex
 	db     *pebble.DB
 	pre    []byte
-	tbs    map[string]*inline
-	idl    int
+	tblMap map[string]*inline
 	closed *atomic.Bool
 }
 
-func (s *store) DB() *pebble.DB {
-	return s.db
+func (o *objectDB) DB() *pebble.DB {
+	return o.db
 }
 
-func (s *store) Maintain(obj Object) (err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.isClosed() {
+func (o *objectDB) Maintain(obj Object) (err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.isClosed() {
 		return ErrClosed
 	}
-	key := buff.GetBuff()
-	val := buff.GetBuff()
-	bch := s.db.NewBatch()
+	key := getBuf()
+	val := getBuf()
+	bch := o.getBatch()
 	defer func() {
-		buff.PutBuff(key)
-		buff.PutBuff(val)
-		_ = bch.Close()
+		resetBuf(key, val)
+		discardErr(bch.Close)
 	}()
-	join(key, keySep, s.pre, toBytes(preTBL), toBytes(obj.TableName()))
-	oldTbl := &table{Name: obj.TableName(), Index: slices.Clone(obj.TableIndex())}
+	oldTbl := new(table)
 	newTbl := &table{Name: obj.TableName(), Index: slices.Clone(obj.TableIndex())}
 	tin := &inline{Def: newTbl, New: reflectNew(obj)}
-	if err = s._getObj(key, oldTbl); err != nil && !errors.Is(err, ErrNotFound) {
-		return
-	} else if err = s.maintain(tin, bch, oldTbl, newTbl); err != nil {
-		return
+	o.tblKey(key, tin)
+	if err = o.getAny(key.Bytes(), oldTbl); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
 	} else if err = encode(val, newTbl); err != nil {
-		return
+		return err
+	} else if err = o.maintain(tin, bch, oldTbl, newTbl); err != nil {
+		return err
 	}
 	_ = bch.Set(key.Bytes(), val.Bytes(), nil)
-	if err = bch.Commit(pebble.Sync); err != nil {
-		return err
-	} else {
-		s.tbs[tin.Def.Name] = tin
-		return nil
+	if err = bch.Commit(pebble.Sync); err == nil {
+		o.tblMap[tin.Def.Name] = tin
 	}
+	return err
 }
 
-func (s *store) Close() (err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.isClosed() {
+func (o *objectDB) Close() (err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.isClosed() {
 		return ErrClosed
 	}
-	defer s.closed.Store(true)
-	return s.db.Close()
+	defer o.closed.Store(true)
+	return o.db.Close()
 }
 
-func (s *store) Put(obj Object) (id guid.GUID, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.isClosed() {
+func (o *objectDB) Put(obj Object) (id guid.GUID, err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.isClosed() {
 		return id, ErrClosed
 	}
-	tid := obj.TableID()
-	tin := s.tbs[obj.TableName()]
-	bch := s.db.NewBatch()
-	defer mustClose(bch)
+	tin := o.tblMap[obj.TableName()]
 	if tin == nil {
 		return id, ErrTableNotFound
 	}
-	if err = s.del(tin, bch, obj, tid); err != nil {
+	tid := obj.TableID()
+	bch := o.getBatch()
+	defer discardErr(bch.Close)
+	if err = o.objDel(tin, bch, nil, tid); err != nil {
 		return id, err
-	} else if err = s.set(tin, bch, obj, tid); err != nil {
-		return id, err
-	} else if err = bch.Commit(pebble.Sync); err != nil {
+	} else if err = o.objPut(tin, bch, obj, tid); err != nil {
 		return id, err
 	} else {
 		id = tid
-		return
 	}
+	return id, err
 }
 
-func (s *store) Get(obj Object, id guid.GUID) (err error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.isClosed() {
-		return ErrClosed
-	} else if tin := s.tbs[obj.TableName()]; tin == nil {
-		return ErrTableNotFound
-	} else {
-		return s.get(tin, obj, id)
-	}
-}
-
-func (s *store) Del(obj Object, id guid.GUID) (err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.isClosed() {
+func (o *objectDB) Get(obj Object, id guid.GUID) (err error) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	if o.isClosed() {
 		return ErrClosed
 	}
-	tin := s.tbs[obj.TableName()]
-	bch := s.db.NewBatch()
-	defer mustClose(bch)
+	tin := o.tblMap[obj.TableName()]
 	if tin == nil {
 		return ErrTableNotFound
-	} else if err = s.del(tin, bch, obj, id); err != nil {
+	} else {
+		return o.objGet(tin, nil, obj, id)
+	}
+}
+
+func (o *objectDB) Del(obj Object, id guid.GUID) (err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.isClosed() {
+		return ErrClosed
+	}
+	tin := o.tblMap[obj.TableName()]
+	if tin == nil {
+		return ErrTableNotFound
+	}
+	bch := o.getBatch()
+	defer discardErr(bch.Close)
+	if err = o.objDel(tin, bch, obj, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = nil
+		}
 		return err
 	} else {
 		return bch.Commit(pebble.Sync)
 	}
 }
 
-func (s *store) Has(obj Object, index ...string) (has bool, err error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.isClosed() {
-		return false, ErrClosed
-	} else if tin := s.tbs[obj.TableName()]; tin == nil {
-		return has, ErrTableNotFound
-	} else {
-		if len(index) == 0 {
-			return s.hasDat(tin)
-		}
-		return s.hasIdx(tin, obj, index...)
+func (o *objectDB) Has(obj Object, index ...string) (has bool, err error) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	if o.isClosed() {
+		return has, ErrClosed
 	}
+	tin := o.tblMap[obj.TableName()]
+	if tin == nil {
+		return has, ErrTableNotFound
+	} else if len(index) == 0 {
+		return o.objHasDat(tin)
+	} else {
+		for _, idx := range index {
+			if has, err = o.objHasIdx(tin, idx, obj.TableField(idx)); err != nil {
+				return has, err
+			} else if has {
+				return has, nil
+			}
+		}
+	}
+	return has, err
 }
 
-func (s *store) Find(obj Object, search *Search) (all []guid.GUID, err error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.isClosed() {
+func (o *objectDB) Find(obj Object, search *Search) (all []guid.GUID, err error) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	if o.isClosed() {
 		return all, ErrClosed
 	}
-	tin := s.tbs[obj.TableName()]
+	tin := o.tblMap[obj.TableName()]
 	if tin == nil {
 		return all, ErrTableNotFound
 	}
-	for index, _ := range search.Filter {
-		if !slices.Contains(tin.Def.Index, index) {
-			return all, ErrIndexNotFound
-		}
+	if search == nil {
+		search = new(Search)
 	}
 	all = make([]guid.GUID, 0)
-	if len(search.Filter) > 0 {
-		for index, _ := range search.Filter {
-			if idAll, idErr := s.findIdxIDs(tin, search, index, all); len(idAll) == 0 || idErr != nil {
-				return idAll, idErr
+	if len(search.Index) == 0 && search.Filter != nil {
+		for _, index := range search.Index {
+			if idAll, idErr := o.objFindIDByIndex(tin, search, index, all); len(idAll) == 0 || idErr != nil {
+				return all, idErr
 			} else {
 				all = idAll
 			}
 		}
 	} else {
-		all, err = s.findDatIDs(tin, search)
+		if idAll, idErr := o.objFindID(tin, search); len(idAll) == 0 || idErr != nil {
+			return all, idErr
+		} else {
+			all = idAll
+		}
 	}
 	slices.SortStableFunc(all, func(a, b guid.GUID) int {
 		if search.Desc {
@@ -175,11 +185,11 @@ func (s *store) Find(obj Object, search *Search) (all []guid.GUID, err error) {
 	if search.Limit > 0 && len(all) > search.Limit {
 		all = all[:search.Limit]
 	}
-	return all, nil
+	return all, err
 }
 
 // Open db
-func Open(dir string, pre []byte) (DB, error) {
+func Open(dir string, pre []byte) (ODB, error) {
 	opts := &pebble.Options{
 		WALDir: path.Join(dir, `./wal`),
 	}
@@ -191,315 +201,277 @@ func Open(dir string, pre []byte) (DB, error) {
 }
 
 // OpenWithDB open db with pebble.DB
-func OpenWithDB(pdb *pebble.DB, pre []byte) (DB, error) {
-	db := &store{
+func OpenWithDB(pdb *pebble.DB, pre []byte) (ODB, error) {
+	db := &objectDB{
 		mu:     new(sync.RWMutex),
 		db:     pdb,
 		pre:    pre,
-		tbs:    make(map[string]*inline),
-		idl:    guid.BLen,
+		tblMap: make(map[string]*inline),
 		closed: new(atomic.Bool),
 	}
 	return db, nil
 }
 
 /*
-  Package method
+  Package private functions
 */
 
-func (s *store) findIdxIDs(tin *inline, search *Search, index string, inAll []guid.GUID) (all []guid.GUID, err error) {
-	sKey := buff.GetBuff()
-	eKey := buff.GetBuff()
-	val := buff.GetBuff()
-	defer func() {
-		buff.PutBuff(sKey)
-		buff.PutBuff(eKey)
-		buff.PutBuff(val)
-	}()
-	s.joinIdxPre(sKey, tin.Def.Name, index+keySep)
-	s.joinIdxPre(eKey, tin.Def.Name, index+keyLmt)
-	limit := search.Limit
-	noLimit := limit == 0 || len(search.Filter) > 1
-	noInID := len(inAll) == 0
-	filter := search.Filter[index]
-	preLen := sKey.Len()
-	keyLen := 0
-	allLen := 0
-	if i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: sKey.Bytes(), UpperBound: eKey.Bytes()}); e != nil {
+func (o *objectDB) objFindIDByIndex(tin *inline, search *Search, index string, inIDs []guid.GUID) (all []guid.GUID, err error) {
+	sk := getBuf()
+	ek := getBuf()
+	defer putBuf(sk, ek)
+	o.idxKey(sk, tin, index, guid.NULL).WriteString(keySep)
+	o.idxKey(ek, tin, index, guid.NULL).WriteString(keyLmt)
+	ignore := len(inIDs) == 0
+	var value []byte
+	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
 		return all, e
 	} else {
-		defer mustClose(i)
+		defer discardErr(i.Close)
 		all = make([]guid.GUID, 0)
-		var idxKey []byte
 		if !search.Desc {
-			for i.First(); i.Valid() && (noLimit || allLen < limit); i.Next() {
-				bufReset(val)
-				idxKey = i.Key()
-				if keyLen = len(idxKey); keyLen < preLen+s.idl+1 ||
-					idxKey[keyLen-s.idl-1] != keySep[0] {
+			for i.First(); i.Valid(); i.Next() {
+				key := i.Key()
+				id := toGUID(key[len(key)-guid.BLen:])
+				if !ignore && !slices.ContainsFunc(inIDs, func(g guid.GUID) bool { return g.Equal(id) }) {
 					continue
-				} else if val.Write(idxKey[preLen : keyLen-s.idl-1]); filter(index, val.Bytes()) {
-					if id := parseGUID(idxKey[keyLen-s.idl:]); noInID || slices.Contains(inAll, id) {
-						all = append(all, id)
-						allLen++
-					}
+				} else if value, err = i.ValueAndErr(); err != nil {
+					return all, err
+				} else if !search.Filter(index, value) {
+					continue
 				}
+				all = append(all, toGUID(key[len(key)-guid.BLen:]))
 			}
 		} else {
-			for i.Last(); i.Valid() && (noLimit || allLen < limit); i.Prev() {
-				bufReset(val)
-				idxKey = i.Key()
-				if keyLen = len(idxKey); keyLen < preLen+s.idl+1 ||
-					idxKey[keyLen-s.idl-1] != keySep[0] {
+			for i.Last(); i.Valid(); i.Prev() {
+				key := i.Key()
+				id := toGUID(key[len(key)-guid.BLen:])
+				if !ignore && !slices.ContainsFunc(inIDs, func(g guid.GUID) bool { return g.Equal(id) }) {
 					continue
-				} else if val.Write(idxKey[preLen : keyLen-s.idl-1]); filter(index, val.Bytes()) {
-					if id := parseGUID(idxKey[keyLen-s.idl:]); noInID || slices.Contains(inAll, id) {
-						all = append(all, id)
-						allLen++
-					}
+				} else if value, err = i.ValueAndErr(); err != nil {
+					return all, err
+				} else if !search.Filter(index, value) {
+					continue
 				}
+				all = append(all, toGUID(key[len(key)-guid.BLen:]))
 			}
 		}
 	}
-	return all, nil
+	return all, err
 }
 
-func (s *store) findDatIDs(tin *inline, search *Search) (all []guid.GUID, err error) {
-	sKey := buff.GetBuff()
-	eKey := buff.GetBuff()
-	defer func() {
-		buff.PutBuff(sKey)
-		buff.PutBuff(eKey)
-	}()
-	s.joinDatPre(sKey, tin.Def.Name+keySep)
-	s.joinDatPre(eKey, tin.Def.Name+keyLmt)
-	limit := search.Limit
-	noLimit := limit == 0
-	preLen := sKey.Len()
-	allLen := 0
-	if i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: sKey.Bytes(), UpperBound: eKey.Bytes()}); e != nil {
+func (o *objectDB) objFindID(tin *inline, search *Search) (all []guid.GUID, err error) {
+	sk := getBuf()
+	ek := getBuf()
+	defer putBuf(sk, ek)
+	o.datKey(sk, tin, guid.NULL).WriteString(keySep)
+	o.datKey(ek, tin, guid.NULL).WriteString(keyLmt)
+	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
 		return all, e
 	} else {
-		defer mustClose(i)
+		defer discardErr(i.Close)
 		all = make([]guid.GUID, 0)
 		if !search.Desc {
-			for i.First(); i.Valid() && (noLimit || allLen < limit); i.Next() {
-				if key := i.Key(); len(key) != preLen+s.idl {
-					continue
-				} else {
-					allLen++
-					all = append(all, parseGUID(key[preLen:]))
-				}
+			for i.First(); i.Valid(); i.Next() {
+				key := i.Key()
+				all = append(all, toGUID(key[len(key)-guid.BLen:]))
 			}
 		} else {
-			for i.Last(); i.Valid() && (noLimit || allLen < limit); i.Prev() {
-				if key := i.Key(); len(key) != preLen+s.idl {
-					continue
-				} else {
-					allLen++
-					all = append(all, parseGUID(key[preLen:]))
-				}
+			for i.Last(); i.Valid(); i.Prev() {
+				key := i.Key()
+				all = append(all, toGUID(key[len(key)-guid.BLen:]))
 			}
 		}
 	}
-	return all, nil
+	return all, err
 }
 
-func (s *store) hasIdx(tin *inline, obj Object, list ...string) (has bool, err error) {
-	sKey := buff.GetBuff()
-	eKey := buff.GetBuff()
-	defer func() {
-		buff.PutBuff(sKey)
-		buff.PutBuff(eKey)
-	}()
-	for _, index := range list {
-		bufReset(sKey, eKey)
-		s.joinIdxValPre(sKey, tin.Def.Name, index, obj.TableField(index))
-		s.joinIdxValPre(eKey, tin.Def.Name, index, obj.TableField(index))
-		sKey.WriteByte(keySep[0])
-		eKey.WriteByte(keyLmt[0])
-		if has, err = s._hasIndex(sKey, eKey); err != nil {
-			return has, err
-		} else if has {
-			break
-		}
-	}
-	return
-}
-
-func (s *store) hasDat(tin *inline) (has bool, err error) {
-	sKey := buff.GetBuff()
-	eKey := buff.GetBuff()
-	defer func() {
-		buff.PutBuff(sKey)
-		buff.PutBuff(eKey)
-	}()
-	s.joinDatPre(sKey, tin.Def.Name+keySep)
-	s.joinDatPre(eKey, tin.Def.Name+keyLmt)
-	if i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: sKey.Bytes(), UpperBound: eKey.Bytes()}); e != nil {
-		return has, e
+func (o *objectDB) objHasIdx(tin *inline, index string, dst []byte) (bool, error) {
+	sk := getBuf()
+	ek := getBuf()
+	defer putBuf(sk, ek)
+	o.idxKey(sk, tin, index, guid.NULL).WriteString(keySep)
+	o.idxKey(sk, tin, index, guid.NULL).WriteString(keyLmt)
+	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
+		return false, e
 	} else {
-		defer mustClose(i)
-		has = i.First()
+		defer discardErr(i.Close)
+		for i.First(); i.Valid(); i.Next() {
+			if bs, er := i.ValueAndErr(); er != nil {
+				return false, er
+			} else if bytes.Equal(bs, dst) {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
-	return
 }
 
-func (s *store) del(tin *inline, bch *pebble.Batch, _ Object, id guid.GUID) (err error) {
-	key := buff.GetBuff()
-	defer buff.PutBuff(key)
-	s.joinDat(key, tin.Def.Name, id)
-	o := tin.New()
-	if e := s._getObj(key, o); e != nil && !errors.Is(e, ErrNotFound) {
+func (o *objectDB) objHasDat(tin *inline) (bool, error) {
+	sk := getBuf()
+	ek := getBuf()
+	defer putBuf(sk, ek)
+	o.datKey(sk, tin, guid.NULL).WriteString(keySep)
+	o.datKey(ek, tin, guid.NULL).WriteString(keyLmt)
+	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
+		return false, e
+	} else {
+		defer discardErr(i.Close)
+		return i.First(), nil
+	}
+}
+
+func (o *objectDB) objGet(tin *inline, _ *pebble.Batch, obj Object, id guid.GUID) error {
+	key := getBuf()
+	defer putBuf(key)
+	o.datKey(key, tin, id)
+	return o.getObj(key.Bytes(), obj)
+}
+
+func (o *objectDB) objDel(tin *inline, bch *pebble.Batch, _ Object, id guid.GUID) error {
+	key := getBuf()
+	defer putBuf(key)
+	o.datKey(key, tin, id)
+	obj := tin.New()
+	if err := o.getObj(key.Bytes(), obj); err != nil {
+		return err
+	}
+	_ = bch.Delete(key.Bytes(), nil)
+	for _, idx := range tin.Def.Index {
+		resetBuf(key)
+		o.idxKey(key, tin, idx, id)
+		_ = bch.Delete(key.Bytes(), nil)
+	}
+	return nil
+}
+
+func (o *objectDB) objPut(tin *inline, bch *pebble.Batch, obj Object, id guid.GUID) error {
+	key := getBuf()
+	val := getBuf()
+	defer putBuf(key, val)
+	o.datKey(key, tin, id)
+	if err := encode(val, obj); err != nil {
+		return err
+	}
+	_ = bch.Set(key.Bytes(), val.Bytes(), nil)
+	for _, idx := range tin.Def.Index {
+		resetBuf(key)
+		o.idxKey(key, tin, idx, obj.TableID())
+		_ = bch.Set(key.Bytes(), obj.TableField(idx), nil)
+	}
+	return nil
+}
+
+func (o *objectDB) getObj(key []byte, obj Object) error {
+	return o.getAny(key, obj)
+}
+
+func (o *objectDB) getAny(key []byte, val any) error {
+	buf := getBuf()
+	defer putBuf(buf)
+	if err := o.dbGet(key, buf); err != nil {
+		return err
+	}
+	return decode(buf, val)
+}
+
+func (o *objectDB) dbGet(k []byte, w *bytes.Buffer) error {
+	if v, c, e := o.db.Get(k); e != nil {
 		return e
-	} else if errors.Is(e, ErrNotFound) {
-		return
 	} else {
-		_ = bch.Delete(key.Bytes(), nil)
+		defer discardErr(c.Close)
+		_, _ = w.Write(v)
+		return e
 	}
-	for _, index := range tin.Def.Index {
-		bufReset(key)
-		s.joinIdx(key, tin.Def.Name, index, o.TableField(index), id)
-		_ = bch.Delete(key.Bytes(), nil)
-	}
-	return
 }
 
-func (s *store) set(tin *inline, bch *pebble.Batch, obj Object, id guid.GUID) (err error) {
-	key := buff.GetBuff()
-	val := buff.GetBuff()
+func (o *objectDB) maintain(tin *inline, bch *pebble.Batch, oldTbl, newTbl *table) error {
+	sk := getBuf()
+	ek := getBuf()
+	tmp := getBuf()
 	defer func() {
-		buff.PutBuff(key)
-		buff.PutBuff(val)
+		putBuf(sk, ek, tmp)
 	}()
-	s.joinDat(key, tin.Def.Name, id)
-	if err = encode(val, obj); err != nil {
-		return
-	} else {
-		_ = bch.Set(key.Bytes(), val.Bytes(), nil)
-	}
-	for _, index := range tin.Def.Index {
-		bufReset(key)
-		s.joinIdx(key, tin.Def.Name, index, obj.TableField(index), id)
-		_ = bch.Set(key.Bytes(), id[:], nil)
-	}
-	return
-}
-
-func (s *store) get(tin *inline, obj Object, id guid.GUID) error {
-	key := buff.GetBuff()
-	defer buff.PutBuff(key)
-	s.joinDat(key, tin.Def.Name, id)
-	return s._getObj(key, obj)
-}
-
-func (s *store) maintain(tin *inline, bch *pebble.Batch, oldTbl, newTbl *table) error {
-	sk := buff.GetBuff()
-	ek := buff.GetBuff()
-	defer func() {
-		buff.PutBuff(sk)
-		buff.PutBuff(ek)
-	}()
-	s.joinDatPre(sk, newTbl.Name+keySep)
-	s.joinDatPre(ek, newTbl.Name+keyLmt)
+	o.datKey(sk, tin, guid.NULL).WriteString(keySep)
+	o.datKey(ek, tin, guid.NULL).WriteString(keyLmt)
 	delIdx := make([]string, 0)
-	for i := 0; i < len(oldTbl.Index); i++ {
-		if !slices.Contains(newTbl.Index, oldTbl.Index[i]) {
-			delIdx = append(delIdx, oldTbl.Index[i])
-		}
-	}
 	addIdx := make([]string, 0)
-	for i := 0; i < len(newTbl.Index); i++ {
-		if !slices.Contains(oldTbl.Index, newTbl.Index[i]) {
-			addIdx = append(addIdx, newTbl.Index[i])
+	for _, idx := range oldTbl.Index {
+		if !slices.Contains(newTbl.Index, idx) {
+			delIdx = append(delIdx, idx)
 		}
 	}
-	if len(delIdx) == 0 && len(addIdx) == 0 {
-		return nil
+	for _, idx := range newTbl.Index {
+		if !slices.Contains(oldTbl.Index, idx) {
+			addIdx = append(addIdx, idx)
+		}
 	}
 	var iter *pebble.Iterator
-	if i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
+	if i, e := o.db.NewIter(&pebble.IterOptions{
+		LowerBound: sk.Bytes(),
+		UpperBound: ek.Bytes(),
+	}); e != nil {
 		return e
 	} else {
 		iter = i
-		defer mustClose(iter)
+		defer discardErr(iter.Close)
 	}
-	tmp := buff.GetBuff()
-	defer buff.PutBuff(tmp)
 	for iter.First(); iter.Valid(); iter.Next() {
-		o := tin.New()
-		if b, e := iter.ValueAndErr(); e != nil {
-			return e
-		} else if err := decode(bytes.NewBuffer(b), o); err != nil {
-			return err
-		}
-		for i := 0; i < len(delIdx); i++ {
-			bufReset(tmp)
-			s.joinIdx(tmp, tin.Def.Name, delIdx[i], o.TableField(delIdx[i]), o.TableID())
-			_ = bch.Delete(tmp.Bytes(), nil)
-		}
-		for i := 0; i < len(addIdx); i++ {
-			bufReset(tmp)
-			s.joinIdx(tmp, tin.Def.Name, addIdx[i], o.TableField(addIdx[i]), o.TableID())
-			_ = bch.Set(tmp.Bytes(), o.TableID().Bytes(), nil)
+		v := tin.New()
+		if bs, er := iter.ValueAndErr(); er != nil {
+			return er
+		} else if er = decode(bytes.NewBuffer(bs), v); er != nil {
+			return er
+		} else {
+			for _, idx := range delIdx {
+				resetBuf(tmp)
+				o.idxKey(tmp, tin, idx, v.TableID())
+				_ = bch.Delete(tmp.Bytes(), nil)
+			}
+			for _, idx := range addIdx {
+				resetBuf(tmp)
+				o.idxKey(tmp, tin, idx, v.TableID())
+				_ = bch.Set(tmp.Bytes(), v.TableField(idx), nil)
+			}
 		}
 	}
 	return nil
 }
 
-func (s *store) _hasIndex(sk, ek *bytes.Buffer) (has bool, err error) {
-	if i, e := s.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
-		return has, e
+func (o *objectDB) idxKey(buf *bytes.Buffer, tin *inline, index string, id guid.GUID) *bytes.Buffer {
+	name := tin.Def.Name
+	nameLen := fmt.Sprintf(`%02x`, len(name))
+	indexLen := fmt.Sprintf(`%02x`, len(index))
+	if id.Empty() {
+		join(buf, o.pre, keySep, toBts(keyIDX), toBts(nameLen), toBts(name), toBts(indexLen), toBts(index))
 	} else {
-		defer mustClose(i)
-		has = i.First()
+		join(buf, o.pre, keySep, toBts(keyIDX), toBts(nameLen), toBts(name), toBts(indexLen), toBts(index), id.Bytes())
 	}
-	return
+	return buf
 }
 
-func (s *store) _getObj(key *bytes.Buffer, val any) error {
-	buf := buff.GetBuff()
-	defer buff.PutBuff(buf)
-	if e := s._getVal(buf, key.Bytes()); e != nil {
-		return e
-	}
-	return decode(buf, val)
-}
-
-func (s *store) _getVal(buf *bytes.Buffer, key []byte) error {
-	if v, c, e := s.db.Get(key); e != nil {
-		return e
+func (o *objectDB) datKey(buf *bytes.Buffer, tin *inline, id guid.GUID) *bytes.Buffer {
+	name := tin.Def.Name
+	nameLen := fmt.Sprintf(`%02x`, len(name))
+	if id.Empty() {
+		join(buf, o.pre, keySep, toBts(keyDAT), toBts(nameLen), toBts(name))
 	} else {
-		buf.Write(v)
-		return c.Close()
+		join(buf, o.pre, keySep, toBts(keyDAT), toBts(nameLen), toBts(name), id.Bytes())
 	}
+	return buf
 }
 
-func (s *store) joinDat(buf *bytes.Buffer, name string, id guid.GUID) {
-	// Eg. dat/table/id
-	join(buf, keySep, s.pre, toBytes(preDAT), toBytes(name), id.Bytes())
+func (o *objectDB) tblKey(buf *bytes.Buffer, tin *inline) *bytes.Buffer {
+	name := tin.Def.Name
+	nameLen := fmt.Sprintf(`%02x`, len(name))
+	join(buf, o.pre, keySep, toBts(keyTBL), toBts(nameLen), toBts(tin.Def.Name))
+	return buf
 }
 
-func (s *store) joinDatPre(buf *bytes.Buffer, name string) {
-	// Eg. dat/table
-	join(buf, keySep, s.pre, toBytes(preDAT), toBytes(name))
+func (o *objectDB) getBatch() *pebble.Batch {
+	return o.db.NewBatch()
 }
 
-func (s *store) joinIdx(buf *bytes.Buffer, name, index string, value []byte, id guid.GUID) {
-	// Eg. idx/table/index/value/id
-	join(buf, keySep, s.pre, toBytes(preIDX), toBytes(name), toBytes(index), value, id.Bytes())
-}
-
-func (s *store) joinIdxValPre(buf *bytes.Buffer, name, index string, value []byte) {
-	// Eg. idx/table/index/value
-	join(buf, keySep, s.pre, toBytes(preIDX), toBytes(name), toBytes(index), value)
-}
-
-func (s *store) joinIdxPre(buf *bytes.Buffer, name, index string) {
-	// Eg. idx/table/index
-	join(buf, keySep, s.pre, toBytes(preIDX), toBytes(name), toBytes(index))
-}
-
-func (s *store) isClosed() bool {
-	return s.closed.Load()
+func (o *objectDB) isClosed() bool {
+	return o.closed.Load()
 }

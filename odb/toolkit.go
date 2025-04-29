@@ -3,10 +3,10 @@ package odb
 import (
 	"bytes"
 	"encoding"
+	"github.com/azeroth-sha/simple/buff"
 	"github.com/azeroth-sha/simple/guid"
 	"github.com/azeroth-sha/simple/internal"
 	"github.com/vmihailenco/msgpack/v5"
-	"io"
 	"reflect"
 )
 
@@ -16,11 +16,11 @@ func encode(b *bytes.Buffer, v any) error {
 			return e
 		} else {
 			b.Write(bs)
-			return nil
 		}
 	} else {
 		return msgpack.NewEncoder(b).Encode(v)
 	}
+	return nil
 }
 
 func decode(b *bytes.Buffer, v any) error {
@@ -31,8 +31,10 @@ func decode(b *bytes.Buffer, v any) error {
 	}
 }
 
-func join(buf *bytes.Buffer, sep string, pre []byte, bs ...[]byte) {
-	buf.Write(pre)
+func join(buf *bytes.Buffer, pre []byte, sep string, bs ...[]byte) {
+	if len(pre) > 0 {
+		buf.Write(pre)
+	}
 	for i, b := range bs {
 		if i > 0 {
 			buf.WriteString(sep)
@@ -41,20 +43,29 @@ func join(buf *bytes.Buffer, sep string, pre []byte, bs ...[]byte) {
 	}
 }
 
-func toBytes(s string) []byte {
+func toBts(s string) []byte {
 	return internal.ToBytes(s)
 }
 
-func toString(b []byte) string {
+func toStr(b []byte) string {
 	return internal.ToString(b)
 }
 
-func bufReset(bufList ...*bytes.Buffer) {
+func getBuf() *bytes.Buffer {
+	return buff.GetBuff()
+}
+
+func putBuf(all ...*bytes.Buffer) {
+	for _, b := range all {
+		buff.PutBuff(b)
+	}
+}
+
+func resetBuf(bufList ...*bytes.Buffer) {
 	for _, buf := range bufList {
-		if buf.Len() == 0 {
-			continue
+		if buf.Len() > 0 {
+			buf.Reset()
 		}
-		buf.Reset()
 	}
 }
 
@@ -68,14 +79,16 @@ func reflectNew(o Object) func() Object {
 	}
 }
 
-func mustClose(c io.Closer) {
-	if c == nil {
+func discardErr(f func() error) {
+	if f == nil {
 		return
 	}
-	_ = c.Close()
+	_ = f()
 }
 
-func parseGUID(buf []byte) (id guid.GUID) {
-	copy(id[:], buf)
+func toGUID(buf []byte) (id guid.GUID) {
+	if len(buf) == guid.BLen {
+		copy(id[:], buf)
+	}
 	return
 }
