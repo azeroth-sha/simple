@@ -78,9 +78,11 @@ func (o *objectDB) Put(obj Object) (id guid.GUID, err error) {
 	tid := obj.TableID()
 	bch := o.getBatch()
 	defer discardErr(bch.Close)
-	if err = o.objDel(tin, bch, nil, tid); err != nil {
+	if err = o.objDel(tin, bch, nil, tid); err != nil && !errors.Is(err, ErrNotFound) {
 		return id, err
 	} else if err = o.objPut(tin, bch, obj, tid); err != nil {
+		return id, err
+	} else if err = bch.Commit(pebble.Sync); err != nil {
 		return id, err
 	} else {
 		id = tid
@@ -135,6 +137,8 @@ func (o *objectDB) Has(obj Object, index ...string) (has bool, err error) {
 		return has, ErrTableNotFound
 	} else if len(index) == 0 {
 		return o.objHasDat(tin)
+	} else if !checkIndex(tin.Def.Index, index...) {
+		return has, ErrIndexNotFound
 	} else {
 		for _, idx := range index {
 			if has, err = o.objHasIdx(tin, idx, obj.TableField(idx)); err != nil {
@@ -153,12 +157,14 @@ func (o *objectDB) Find(obj Object, search *Search) (all []guid.GUID, err error)
 	if o.isClosed() {
 		return all, ErrClosed
 	}
+	if search == nil {
+		search = new(Search)
+	}
 	tin := o.tblMap[obj.TableName()]
 	if tin == nil {
 		return all, ErrTableNotFound
-	}
-	if search == nil {
-		search = new(Search)
+	} else if !checkIndex(tin.Def.Index, search.Index...) {
+		return all, ErrIndexNotFound
 	}
 	all = make([]guid.GUID, 0)
 	if len(search.Index) == 0 && search.Filter != nil {
@@ -220,8 +226,16 @@ func (o *objectDB) objFindIDByIndex(tin *inline, search *Search, index string, i
 	sk := getBuf()
 	ek := getBuf()
 	defer putBuf(sk, ek)
-	o.idxKey(sk, tin, index, guid.NULL).WriteString(keySep)
-	o.idxKey(ek, tin, index, guid.NULL).WriteString(keyLmt)
+	if search.UnixL > 0 {
+		o.idxKey(sk, tin, index, toGUIDWithSec(search.UnixL, 0x00))
+	} else {
+		o.idxKey(sk, tin, index, guid.NULL).WriteString(keySep)
+	}
+	if search.UnixU > 0 {
+		o.idxKey(sk, tin, index, toGUIDWithSec(search.UnixU, 0xFF))
+	} else {
+		o.idxKey(ek, tin, index, guid.NULL).WriteString(keyLmt)
+	}
 	ignore := len(inIDs) == 0
 	var value []byte
 	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
@@ -233,7 +247,7 @@ func (o *objectDB) objFindIDByIndex(tin *inline, search *Search, index string, i
 			for i.First(); i.Valid(); i.Next() {
 				key := i.Key()
 				id := toGUID(key[len(key)-guid.BLen:])
-				if !ignore && !slices.ContainsFunc(inIDs, func(g guid.GUID) bool { return g.Equal(id) }) {
+				if !ignore && !slices.Contains(inIDs, id) {
 					continue
 				} else if value, err = i.ValueAndErr(); err != nil {
 					return all, err
@@ -246,7 +260,7 @@ func (o *objectDB) objFindIDByIndex(tin *inline, search *Search, index string, i
 			for i.Last(); i.Valid(); i.Prev() {
 				key := i.Key()
 				id := toGUID(key[len(key)-guid.BLen:])
-				if !ignore && !slices.ContainsFunc(inIDs, func(g guid.GUID) bool { return g.Equal(id) }) {
+				if !ignore && !slices.Contains(inIDs, id) {
 					continue
 				} else if value, err = i.ValueAndErr(); err != nil {
 					return all, err
@@ -264,8 +278,16 @@ func (o *objectDB) objFindID(tin *inline, search *Search) (all []guid.GUID, err 
 	sk := getBuf()
 	ek := getBuf()
 	defer putBuf(sk, ek)
-	o.datKey(sk, tin, guid.NULL).WriteString(keySep)
-	o.datKey(ek, tin, guid.NULL).WriteString(keyLmt)
+	if search.UnixL > 0 {
+		o.datKey(sk, tin, toGUIDWithSec(search.UnixL, 0x00))
+	} else {
+		o.datKey(sk, tin, guid.NULL).WriteString(keySep)
+	}
+	if search.UnixU > 0 {
+		o.datKey(sk, tin, toGUIDWithSec(search.UnixU, 0xFF))
+	} else {
+		o.datKey(ek, tin, guid.NULL).WriteString(keyLmt)
+	}
 	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
 		return all, e
 	} else {
@@ -291,7 +313,7 @@ func (o *objectDB) objHasIdx(tin *inline, index string, dst []byte) (bool, error
 	ek := getBuf()
 	defer putBuf(sk, ek)
 	o.idxKey(sk, tin, index, guid.NULL).WriteString(keySep)
-	o.idxKey(sk, tin, index, guid.NULL).WriteString(keyLmt)
+	o.idxKey(ek, tin, index, guid.NULL).WriteString(keyLmt)
 	if i, e := o.db.NewIter(&pebble.IterOptions{LowerBound: sk.Bytes(), UpperBound: ek.Bytes()}); e != nil {
 		return false, e
 	} else {

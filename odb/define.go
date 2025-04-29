@@ -26,12 +26,12 @@ type Filter func(index string, value []byte) bool
 
 // Search 查询参数
 type Search struct {
-	Limit     int      // 查询限制(<=0为不限制)
-	Desc      bool     // 是否倒序
-	Index     []string // 索引
-	Filter    Filter   // 过滤器
-	UnixBegin int64    // 时间范围开始(S)
-	UnixEnd   int64    // 时间范围结束(S)
+	Limit  int      // 查询限制(<=0为不限制)
+	Desc   bool     // 是否倒序
+	Index  []string // 索引
+	Filter Filter   // 过滤器
+	UnixL  int64    // 时间范围开始(S)
+	UnixU  int64    // 时间范围结束(S)
 }
 
 // ODB 数据库接口

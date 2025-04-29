@@ -3,11 +3,13 @@ package odb
 import (
 	"bytes"
 	"encoding"
+	"encoding/binary"
 	"github.com/azeroth-sha/simple/buff"
 	"github.com/azeroth-sha/simple/guid"
 	"github.com/azeroth-sha/simple/internal"
 	"github.com/vmihailenco/msgpack/v5"
 	"reflect"
+	"slices"
 )
 
 func encode(b *bytes.Buffer, v any) error {
@@ -80,10 +82,9 @@ func reflectNew(o Object) func() Object {
 }
 
 func discardErr(f func() error) {
-	if f == nil {
-		return
+	if f != nil {
+		_ = f()
 	}
-	_ = f()
 }
 
 func toGUID(buf []byte) (id guid.GUID) {
@@ -91,4 +92,21 @@ func toGUID(buf []byte) (id guid.GUID) {
 		copy(id[:], buf)
 	}
 	return
+}
+
+func toGUIDWithSec(sec int64, fill byte) (id guid.GUID) {
+	binary.BigEndian.PutUint32(id[:4], uint32(sec))
+	for i := 4; i < guid.BLen; i++ {
+		id[i] = fill
+	}
+	return id
+}
+
+func checkIndex(all []string, indexs ...string) bool {
+	for _, index := range indexs {
+		if !slices.Contains(all, index) {
+			return false
+		}
+	}
+	return true
 }
