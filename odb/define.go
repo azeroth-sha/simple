@@ -22,7 +22,7 @@ type Object interface {
 }
 
 // Filter 过滤器
-type Filter func(index string, value []byte) bool
+type Filter func(id guid.GUID, index string, value []byte) bool
 
 // Search 查询参数
 type Search struct {

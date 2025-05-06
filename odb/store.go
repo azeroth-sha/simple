@@ -251,7 +251,7 @@ func (o *objectDB) objFindIDByIndex(tin *inline, search *Search, index string, i
 					continue
 				} else if value, err = i.ValueAndErr(); err != nil {
 					return all, err
-				} else if !search.Filter(index, value) {
+				} else if !search.Filter(id, index, value) {
 					continue
 				}
 				all = append(all, toGUID(key[len(key)-guid.BLen:]))
@@ -264,7 +264,7 @@ func (o *objectDB) objFindIDByIndex(tin *inline, search *Search, index string, i
 					continue
 				} else if value, err = i.ValueAndErr(); err != nil {
 					return all, err
-				} else if !search.Filter(index, value) {
+				} else if !search.Filter(id, index, value) {
 					continue
 				}
 				all = append(all, toGUID(key[len(key)-guid.BLen:]))
